@@ -12,6 +12,7 @@ implemented yet.
 - `GET /health` health-check endpoint.
 - Pydantic response schemas.
 - Separate API routes, services, and utilities packages.
+- Reusable public URL validation with SSRF protections.
 - Pytest test suite.
 - `.env.example`, `.gitignore`, and pinned `requirements.txt`.
 
@@ -36,9 +37,12 @@ implemented yet.
 │   ├── services/
 │   │   └── __init__.py         # Business logic (to be added)
 │   └── utils/
-│       └── __init__.py         # Shared helpers (to be added)
+│       ├── __init__.py
+│       └── url_validation.py   # Public URL validation and SSRF checks
 ├── tests/
-│   └── test_health.py
+│   ├── test_config.py
+│   ├── test_health.py
+│   └── test_url_validation.py
 ├── .env.example
 ├── .gitignore
 ├── README.md
@@ -135,8 +139,43 @@ python -m pytest
 - `.env` and other local environment files are excluded by `.gitignore`.
 - Only blank placeholders belong in `.env.example`.
 
+## URL validation (Stage 1)
+
+`app/utils/url_validation.py` exposes `validate_public_url(url)`, which:
+
+- accepts only HTTP and HTTPS URLs on their default ports (80 and 443);
+- rejects malformed URLs, embedded credentials, local/metadata hostnames, and
+  non-public IP addresses;
+- rejects Unicode format characters (zero-width and bidirectional controls);
+- rejects reserved hostnames under `.onion`, `.test`, `.example`, `.invalid`,
+  and `.alt`;
+- rejects non-canonical port text such as `:080` instead of normalizing it;
+- normalizes hostnames to lowercase ASCII/IDNA form;
+- resolves DNS once and rejects the URL if resolution fails or any result is
+  non-public;
+- returns a `ValidatedURL` containing the normalized URL, hostname, port, and
+  resolved IP addresses, plus a `host_header` property that brackets IPv6
+  hostnames and omits the default port.
+
+Callers must build the request from the returned `ValidatedURL` and must never
+re-parse the original raw input. Use `ValidatedURL.url` for the request,
+`ValidatedURL.hostname` for TLS SNI, and `ValidatedURL.host_header` for the HTTP
+`Host` header.
+
+Security limitations:
+
+- DNS can change between validation and connection. The future fetching layer
+  must connect to the validated addresses (or re-resolve and re-validate
+  immediately before connecting) and verify the peer address it connected to.
+  This stage does not solve DNS rebinding.
+- Redirects are not followed in this stage. The fetching layer must disable
+  automatic redirects and validate every redirect target with
+  `validate_public_url`.
+- IDNA handling uses the standard library's IDNA 2003 codec, not full UTS #46.
+  Confusable Unicode hostnames are not detected.
+
 ## Not implemented yet
 
-- Website content extraction and metadata parsing.
+- Website fetching, content extraction, and metadata parsing.
 - LLM provider integration.
 - Competitor, SEO, and target-audience analysis endpoints.

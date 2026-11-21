@@ -1,5 +1,6 @@
 """Reusable helper functions.
 
-Shared utilities (for example URL normalization) will be added here as
-needed by the analysis features.
+URL validation and SSRF protections live in
+:mod:`app.utils.url_validation`. Additional shared utilities will be added
+here as needed.
 """
