@@ -1,2 +1,135 @@
 # ai-powered-link-analysis
 AI-powered website analysis API built with Python, FastAPI, and LLMs, providing competitor insights, SEO recommendations, and target audience analysis.
+
+This repository currently contains the **project foundation only**. Website
+extraction, LLM integration, and analysis logic are intentionally not
+implemented yet.
+
+## What is included
+
+- FastAPI application entry point (`app/main.py`), served on port **4000**.
+- Environment-based configuration via `pydantic-settings`.
+- `GET /health` health-check endpoint.
+- Pydantic response schemas.
+- Separate API routes, services, and utilities packages.
+- Pytest test suite.
+- `.env.example`, `.gitignore`, and pinned `requirements.txt`.
+
+## Project structure
+
+```
+.
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI app factory and entry point
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes/
+│   │       ├── __init__.py
+│   │       └── health.py       # GET /health
+│   ├── core/
+│   │   ├── __init__.py
+│   │   └── config.py           # Environment-based settings
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   └── health.py           # HealthResponse model
+│   ├── services/
+│   │   └── __init__.py         # Business logic (to be added)
+│   └── utils/
+│       └── __init__.py         # Shared helpers (to be added)
+├── tests/
+│   └── test_health.py
+├── .env.example
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
+
+## Requirements
+
+- Python 3.11+ (verified with Python 3.13)
+- A virtual environment at `.venv`
+
+## Setup
+
+Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+macOS / Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+Edit `.env` as needed. It is ignored by git; only `.env.example` is committed.
+
+## Configuration
+
+| Variable      | Default                                  | Description                                      |
+| ------------- | ---------------------------------------- | ------------------------------------------------ |
+| `APP_NAME`    | `AI-Powered Website Link Analysis API`   | Service name shown in docs and health response.  |
+| `APP_VERSION` | `0.1.0`                                  | Application version.                             |
+| `ENVIRONMENT` | `development`                            | One of `development`, `test`, `production`.      |
+| `DEBUG`       | `false`                                  | Enables FastAPI debug mode and auto-reload.      |
+| `HOST`        | `0.0.0.0`                                | Bind host used by `python -m app.main`.          |
+| `PORT`        | `4000`                                   | Bind port used by `python -m app.main`.          |
+| `LLM_API_KEY` | _(empty)_                                | LLM provider credential; never commit a value.   |
+
+## Running the API
+
+From the project root, with the virtual environment active:
+
+```powershell
+python -m uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
+```
+
+Alternatively, run the entry point directly; it uses `HOST` and `PORT` from
+the environment (default port `4000`):
+
+```powershell
+python -m app.main
+```
+
+Interactive docs: <http://127.0.0.1:4000/docs>
+
+## Health check
+
+```http
+GET /health
+```
+
+```json
+{
+  "status": "ok",
+  "service": "AI-Powered Website Link Analysis API",
+  "version": "0.1.0"
+}
+```
+
+## Tests
+
+```powershell
+python -m pytest
+```
+
+## Security notes
+
+- API credentials are read exclusively from environment variables (or a
+  local, git-ignored `.env` file). Nothing is hardcoded in source.
+- `.env` and other local environment files are excluded by `.gitignore`.
+- Only blank placeholders belong in `.env.example`.
+
+## Not implemented yet
+
+- Website content extraction and metadata parsing.
+- LLM provider integration.
+- Competitor, SEO, and target-audience analysis endpoints.
