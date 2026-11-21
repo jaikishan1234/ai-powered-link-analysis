@@ -1,21 +1,26 @@
 """Application settings loaded from environment variables."""
 
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
     """Runtime configuration.
 
-    Values are read from environment variables and, when present, from a
-    local ``.env`` file. Credentials must only ever come from the
-    environment; never hardcode them in source code.
+    Values are read from environment variables and, when present, from the
+    project-root ``.env`` file. Environment variables take precedence over
+    ``.env`` values. Credentials must only ever come from the environment;
+    never hardcode them in source code.
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -30,6 +35,24 @@ class Settings(BaseSettings):
     # LLM provider credential, supplied via the LLM_API_KEY environment
     # variable. Unused until LLM integration is implemented.
     llm_api_key: SecretStr | None = None
+
+    @field_validator("llm_api_key", mode="before")
+    @classmethod
+    def normalize_llm_api_key(cls, value: object) -> object:
+        """Treat an empty or whitespace-only credential as unset."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def validate_debug_for_environment(self) -> Self:
+        """Reject debug mode in production."""
+        if self.environment == "production" and self.debug:
+            raise ValueError(
+                "DEBUG must be false when ENVIRONMENT=production; "
+                "debug mode and auto-reload are not allowed in production."
+            )
+        return self
 
 
 settings = Settings()

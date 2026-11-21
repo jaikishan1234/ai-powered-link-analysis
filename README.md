@@ -79,10 +79,17 @@ Edit `.env` as needed. It is ignored by git; only `.env.example` is committed.
 | `APP_NAME`    | `AI-Powered Website Link Analysis API`   | Service name shown in docs and health response.  |
 | `APP_VERSION` | `0.1.0`                                  | Application version.                             |
 | `ENVIRONMENT` | `development`                            | One of `development`, `test`, `production`.      |
-| `DEBUG`       | `false`                                  | Enables FastAPI debug mode and auto-reload.      |
+| `DEBUG`       | `false`                                  | FastAPI debug mode + reload; false in production. |
 | `HOST`        | `0.0.0.0`                                | Bind host used by `python -m app.main`.          |
 | `PORT`        | `4000`                                   | Bind port used by `python -m app.main`.          |
-| `LLM_API_KEY` | _(empty)_                                | LLM provider credential; never commit a value.   |
+| `LLM_API_KEY` | _(empty)_                                | LLM provider credential; blank means unset.      |
+
+Environment variables take precedence over `.env` values. The `.env` file is
+loaded from the project root, regardless of the current working directory.
+
+When `ENVIRONMENT=production`, `DEBUG` must remain `false`. Enabling it causes
+startup to fail with a validation error, so FastAPI debug pages and Uvicorn
+auto-reload cannot be enabled accidentally in production.
 
 ## Running the API
 
