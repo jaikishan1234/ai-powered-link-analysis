@@ -1,9 +1,10 @@
 # ai-powered-link-analysis
 AI-powered website analysis API built with Python, FastAPI, and LLMs, providing competitor insights, SEO recommendations, and target audience analysis.
 
-This repository currently contains the **project foundation only**. Website
-extraction, LLM integration, and analysis logic are intentionally not
-implemented yet.
+This repository contains the project foundation, the Stage 1 public URL
+validation with SSRF protections, and the Stage 2 safe website fetching
+implementation. Website content extraction, LLM integration, and analysis
+logic are intentionally not implemented yet.
 
 ## What is included
 
@@ -13,6 +14,8 @@ implemented yet.
 - Pydantic response schemas.
 - Separate API routes, services, and utilities packages.
 - Reusable public URL validation with SSRF protections.
+- Safe website fetching with SSRF protections, HTML-only content checks,
+  streamed response-size limits, and bounded manual redirects.
 - Pytest test suite.
 - `.env.example`, `.gitignore`, and pinned `requirements.txt`.
 
@@ -35,13 +38,17 @@ implemented yet.
 │   │   ├── __init__.py
 │   │   └── health.py           # HealthResponse model
 │   ├── services/
-│   │   └── __init__.py         # Business logic (to be added)
+│   │   ├── __init__.py         # Business logic services
+│   │   ├── fetching.py          # Safe website fetching (SSRF-protected)
+│   │   └── _pinned_transport.py  # IP-pinned HTTPX transport
 │   └── utils/
 │       ├── __init__.py
 │       └── url_validation.py   # Public URL validation and SSRF checks
 ├── tests/
 │   ├── test_config.py
 │   ├── test_health.py
+│   ├── test_fetching.py
+│   ├── test_pinned_transport.py
 │   └── test_url_validation.py
 ├── .env.example
 ├── .gitignore
@@ -87,6 +94,9 @@ Edit `.env` as needed. It is ignored by git; only `.env.example` is committed.
 | `HOST`        | `0.0.0.0`                                | Bind host used by `python -m app.main`.          |
 | `PORT`        | `4000`                                   | Bind port used by `python -m app.main`.          |
 | `LLM_API_KEY` | _(empty)_                                | LLM provider credential; blank means unset.      |
+| `FETCH_TIMEOUT_SECONDS` | `10.0`                         | Per-request timeout for outbound fetching.       |
+| `FETCH_MAX_RESPONSE_BYTES` | `2000000`                     | Maximum accepted HTML response size in bytes.   |
+| `FETCH_MAX_REDIRECTS` | `5`                                | Maximum number of manual redirects followed.    |
 
 Environment variables take precedence over `.env` values. The `.env` file is
 loaded from the project root, regardless of the current working directory.
@@ -138,6 +148,10 @@ python -m pytest
   local, git-ignored `.env` file). Nothing is hardcoded in source.
 - `.env` and other local environment files are excluded by `.gitignore`.
 - Only blank placeholders belong in `.env.example`.
+- Outbound website fetching disables environment proxy inheritance and
+  automatic redirects, and uses an IP-pinned transport that connects only to
+  validated public addresses while preserving the hostname for HTTP Host and
+  TLS SNI, and verifies the connected peer.
 
 ## URL validation (Stage 1)
 
@@ -164,18 +178,42 @@ re-parse the original raw input. Use `ValidatedURL.url` for the request,
 
 Security limitations:
 
-- DNS can change between validation and connection. The future fetching layer
-  must connect to the validated addresses (or re-resolve and re-validate
-  immediately before connecting) and verify the peer address it connected to.
-  This stage does not solve DNS rebinding.
-- Redirects are not followed in this stage. The fetching layer must disable
-  automatic redirects and validate every redirect target with
-  `validate_public_url`.
+- DNS can change between validation and connection (DNS rebinding). The
+  fetching layer connects only to the validated addresses snapshot and
+  verifies the connected peer, but the snapshot itself is time-sensitive.
 - IDNA handling uses the standard library's IDNA 2003 codec, not full UTS #46.
   Confusable Unicode hostnames are not detected.
 
+## Safe fetching (Stage 2)
+
+`app/services/fetching.py` exposes `fetch_html(validated_url: ValidatedURL) -> FetchedPage`.
+
+- Accepts a `ValidatedURL` produced by `validate_public_url`; raw URL strings
+  are rejected.
+- Makes an HTTP GET through the IP-pinned transport in
+  `app/services/_pinned_transport.py`, which connects to the validated IP
+  address instead of resolving the hostname again, and verifies the connected
+  peer against the validated address set. The validated hostname is preserved
+  for the HTTP `Host` header and TLS SNI.
+- Disables environment proxies (`trust_env=False`) and automatic redirects
+  (`follow_redirects=False`).
+- Uses explicit connect/read/write/pool timeouts and bounded connection
+  limits (max 10 connections, no keep-alive reuse, HTTP/1 only).
+- Sends a fixed `User-Agent` and `Accept: text/html, ...` header.
+- Follows redirects manually: bounded by `FETCH_MAX_REDIRECTS`, validates every
+  target (including relative `Location` values) with `validate_public_url`,
+  detects loops, and rejects unsafe destinations.
+- Accepts only `text/html` and `application/xhtml+xml` responses; missing or
+  unsupported content types are rejected.
+- Streams the response body through `aiter_bytes()` (decoded, i.e. after
+  gzip/deflate decompression) and enforces the configured
+  `FETCH_MAX_RESPONSE_BYTES` limit.
+- Translates network, timeout, protocol, and decoding failures into
+  application-level exceptions (`FetchError` subclasses).
+- Does not parse HTML yet; it only returns the fetched HTML text.
+
 ## Not implemented yet
 
-- Website fetching, content extraction, and metadata parsing.
+- Website content extraction, metadata parsing, and analysis.
 - LLM provider integration.
 - Competitor, SEO, and target-audience analysis endpoints.

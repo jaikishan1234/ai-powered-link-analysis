@@ -63,3 +63,34 @@ def test_settings_default_port(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PORT", raising=False)
 
     assert Settings(_env_file=None).port == 4000
+
+
+def test_fetch_settings_have_conservative_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.fetch_timeout_seconds == 10.0
+    assert settings.fetch_max_response_bytes == 2_000_000
+    assert settings.fetch_max_redirects == 5
+
+
+def test_fetch_settings_are_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FETCH_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("FETCH_MAX_RESPONSE_BYTES", "1024")
+    monkeypatch.setenv("FETCH_MAX_REDIRECTS", "2")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.fetch_timeout_seconds == 3.5
+    assert settings.fetch_max_response_bytes == 1024
+    assert settings.fetch_max_redirects == 2
+
+
+def test_fetch_settings_reject_invalid_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, fetch_timeout_seconds=0)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, fetch_max_response_bytes=0)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, fetch_max_redirects=21)

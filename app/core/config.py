@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = Field(default=4000, ge=1, le=65535)
 
+    # Outbound website fetching. Conservative defaults, overridable via
+    # FETCH_TIMEOUT_SECONDS, FETCH_MAX_RESPONSE_BYTES, and FETCH_MAX_REDIRECTS.
+    fetch_timeout_seconds: float = Field(default=10.0, gt=0)
+    fetch_max_response_bytes: int = Field(default=2_000_000, gt=0)
+    fetch_max_redirects: int = Field(default=5, ge=0, le=20)
+
     # LLM provider credential, supplied via the LLM_API_KEY environment
     # variable. Unused until LLM integration is implemented.
     llm_api_key: SecretStr | None = None
