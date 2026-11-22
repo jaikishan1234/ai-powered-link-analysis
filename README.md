@@ -3,8 +3,9 @@ AI-powered website analysis API built with Python, FastAPI, and LLMs, providing 
 
 This repository contains the project foundation, the Stage 1 public URL
 validation with SSRF protections, the Stage 2 safe website fetching
-implementation, and the Stage 3 HTML content extraction service. LLM
-integration and analysis logic are intentionally not implemented yet.
+implementation, the Stage 3 HTML content extraction service, and the Stage 4
+LLM integration service. Competitor, SEO, and target-audience analysis logic
+are intentionally not implemented yet.
 
 ## What is included
 
@@ -43,6 +44,7 @@ integration and analysis logic are intentionally not implemented yet.
 │   │   ├── __init__.py         # Business logic services
 │   │   ├── fetching.py          # Safe website fetching (SSRF-protected)
 │   │   ├── extraction.py        # HTML content extraction
+│   │   ├── llm.py               # LLM client for NVIDIA NIM
 │   │   └── _pinned_transport.py  # IP-pinned HTTPX transport
 │   └── utils/
 │       ├── __init__.py
@@ -52,6 +54,7 @@ integration and analysis logic are intentionally not implemented yet.
 │   ├── test_health.py
 │   ├── test_fetching.py
 │   ├── test_extraction.py
+│   ├── test_llm.py            # LLM client tests
 │   ├── test_pinned_transport.py
 │   └── test_url_validation.py
 ├── .env.example
@@ -102,6 +105,10 @@ Edit `.env` as needed. It is ignored by git; only `.env.example` is committed.
 | `FETCH_MAX_RESPONSE_BYTES` | `2000000`                     | Maximum accepted HTML response size in bytes.   |
 | `FETCH_MAX_REDIRECTS` | `5`                                | Maximum number of manual redirects followed.    |
 | `EXTRACT_MAX_TEXT_CHARS` | `20000`                         | Maximum characters kept from extracted text.    |
+| `LLM_API_KEY`            | _(empty)_                       | LLM provider credential; blank means unset.     |
+| `LLM_BASE_URL`           | `https://integrate.api.nvidia.com/v1` | NVIDIA NIM base URL for the Chat Completions API. |
+| `LLM_MODEL`              | `meta/llama-3.1-8b-instruct`    | Default model name for chat completions.        |
+| `LLM_TIMEOUT_SECONDS`    | `30.0`                          | Per-request timeout for LLM calls, in seconds.  |
 
 Environment variables take precedence over `.env` values. The `.env` file is
 loaded from the project root, regardless of the current working directory.
@@ -247,7 +254,25 @@ Security limitations:
 Extraction is static: it does not execute JavaScript or evaluate CSS, so
 client-rendered content and CSS-hidden content are not resolved.
 
+## LLM integration (Stage 4)
+
+`app/services/llm.py` exposes `LLMClient`, an asynchronous client for the
+NVIDIA NIM OpenAI-compatible Chat Completions API.
+
+- Reads `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_TIMEOUT_SECONDS`
+  from environment variables (or `.env`). No API keys are hardcoded.
+- Reuses `httpx2` (an existing dependency); no additional packages required.
+- `chat(messages, ...)` sends a chat completion request and returns the
+  assistant's message text.
+- `chat_json(messages, ...)` requests structured JSON output and safely parses
+  the response.
+- Raises clear exception subclasses for authentication failures
+  (`LLMAuthenticationError`), rate limits (`LLMRateLimitError`),
+  timeouts (`LLMTimeoutError`), network errors (`LLMNetworkError`), and
+  invalid responses (`LLMInvalidResponseError`).
+- Independent of website extraction and future analysis logic.
+
 ## Not implemented yet
 
-- LLM provider integration.
-- Competitor, SEO, and target-audience analysis endpoints.
+- Competitor, SEO, and target-audience analysis prompts and endpoints.
+- API routes that combine extraction and LLM calls.

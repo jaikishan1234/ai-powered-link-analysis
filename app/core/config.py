@@ -43,8 +43,18 @@ class Settings(BaseSettings):
     extract_max_text_chars: int = Field(default=20_000, gt=0)
 
     # LLM provider credential, supplied via the LLM_API_KEY environment
-    # variable. Unused until LLM integration is implemented.
+    # variable. Leave blank to disable; empty or whitespace-only values are
+    # treated as unset.
     llm_api_key: SecretStr | None = None
+
+    # NVIDIA NIM base URL for the OpenAI-compatible Chat Completions API.
+    llm_base_url: str = Field(default="https://integrate.api.nvidia.com/v1")
+
+    # Default model name used for chat completions. Override via LLM_MODEL.
+    llm_model: str = Field(default="meta/llama-3.1-8b-instruct")
+
+    # Per-request timeout for LLM calls, in seconds.
+    llm_timeout_seconds: float = Field(default=30.0, gt=0)
 
     @field_validator("llm_api_key", mode="before")
     @classmethod
