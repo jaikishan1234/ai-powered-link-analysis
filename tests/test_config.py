@@ -94,3 +94,24 @@ def test_fetch_settings_reject_invalid_values() -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, fetch_max_redirects=21)
+
+
+def test_extraction_settings_have_a_conservative_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.extract_max_text_chars == 20_000
+
+
+def test_extraction_settings_are_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXTRACT_MAX_TEXT_CHARS", "1500")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.extract_max_text_chars == 1500
+
+
+def test_extraction_settings_reject_invalid_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, extract_max_text_chars=0)

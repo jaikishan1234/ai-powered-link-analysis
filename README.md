@@ -2,9 +2,9 @@
 AI-powered website analysis API built with Python, FastAPI, and LLMs, providing competitor insights, SEO recommendations, and target audience analysis.
 
 This repository contains the project foundation, the Stage 1 public URL
-validation with SSRF protections, and the Stage 2 safe website fetching
-implementation. Website content extraction, LLM integration, and analysis
-logic are intentionally not implemented yet.
+validation with SSRF protections, the Stage 2 safe website fetching
+implementation, and the Stage 3 HTML content extraction service. LLM
+integration and analysis logic are intentionally not implemented yet.
 
 ## What is included
 
@@ -16,6 +16,8 @@ logic are intentionally not implemented yet.
 - Reusable public URL validation with SSRF protections.
 - Safe website fetching with SSRF protections, HTML-only content checks,
   streamed response-size limits, and bounded manual redirects.
+- HTML content extraction with metadata, headings, cleaned text, boilerplate
+  removal, and a configurable text-length limit.
 - Pytest test suite.
 - `.env.example`, `.gitignore`, and pinned `requirements.txt`.
 
@@ -40,6 +42,7 @@ logic are intentionally not implemented yet.
 │   ├── services/
 │   │   ├── __init__.py         # Business logic services
 │   │   ├── fetching.py          # Safe website fetching (SSRF-protected)
+│   │   ├── extraction.py        # HTML content extraction
 │   │   └── _pinned_transport.py  # IP-pinned HTTPX transport
 │   └── utils/
 │       ├── __init__.py
@@ -48,6 +51,7 @@ logic are intentionally not implemented yet.
 │   ├── test_config.py
 │   ├── test_health.py
 │   ├── test_fetching.py
+│   ├── test_extraction.py
 │   ├── test_pinned_transport.py
 │   └── test_url_validation.py
 ├── .env.example
@@ -97,6 +101,7 @@ Edit `.env` as needed. It is ignored by git; only `.env.example` is committed.
 | `FETCH_TIMEOUT_SECONDS` | `10.0`                         | Per-request timeout for outbound fetching.       |
 | `FETCH_MAX_RESPONSE_BYTES` | `2000000`                     | Maximum accepted HTML response size in bytes.   |
 | `FETCH_MAX_REDIRECTS` | `5`                                | Maximum number of manual redirects followed.    |
+| `EXTRACT_MAX_TEXT_CHARS` | `20000`                         | Maximum characters kept from extracted text.    |
 
 Environment variables take precedence over `.env` values. The `.env` file is
 loaded from the project root, regardless of the current working directory.
@@ -210,10 +215,39 @@ Security limitations:
   `FETCH_MAX_RESPONSE_BYTES` limit.
 - Translates network, timeout, protocol, and decoding failures into
   application-level exceptions (`FetchError` subclasses).
-- Does not parse HTML yet; it only returns the fetched HTML text.
+- Does not parse HTML; it only returns the fetched HTML text. Parsing is
+  handled by the Stage 3 extraction service.
+
+## HTML content extraction (Stage 3)
+
+`app/services/extraction.py` exposes `extract_content(page: FetchedPage) -> ExtractedPage`.
+
+- Accepts a `FetchedPage` produced by `fetch_html`; raw HTML strings are
+  rejected.
+- Runs synchronously and performs no network requests or DNS resolution.
+- Extracts `<title>` and the standard meta description only from the document
+  `<head>` (falling back to `og:description`), plus unique `h1`–`h6` headings
+  with their levels. Metadata in the body, SVG, `<template>`, and `<noscript>`
+  is ignored.
+- Removes scripts, styles, navigation, headers outside `<article>`, footers,
+  `<aside>` elements, forms, SVGs, embedded media, elements carrying the HTML
+  `hidden` attribute, and boilerplate ARIA roles. Headers inside `<article>`
+  are preserved. `aria-hidden` is not treated as visual hiding.
+- Prefers `<main>`, `[role="main"]`, or `<article>` content, falling back to
+  the body or whole document when the preferred root has no usable text.
+- Preserves direct text around nested blocks, normalizes whitespace, removes
+  exact duplicate blocks and headings, and caps the cleaned text at
+  `EXTRACT_MAX_TEXT_CHARS`.
+- Returns an `ExtractedPage` with the source URL, optional title and
+  description, headings, cleaned text, and a `truncated` flag. Missing
+  metadata stays `None`; nothing is fabricated.
+- Handles malformed and empty HTML gracefully using BeautifulSoup's built-in
+  `html.parser` (no extra parser dependency).
+
+Extraction is static: it does not execute JavaScript or evaluate CSS, so
+client-rendered content and CSS-hidden content are not resolved.
 
 ## Not implemented yet
 
-- Website content extraction, metadata parsing, and analysis.
 - LLM provider integration.
 - Competitor, SEO, and target-audience analysis endpoints.

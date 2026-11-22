@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     fetch_max_response_bytes: int = Field(default=2_000_000, gt=0)
     fetch_max_redirects: int = Field(default=5, ge=0, le=20)
 
+    # HTML extraction. The cleaned text is capped to keep later LLM inputs
+    # bounded; override with EXTRACT_MAX_TEXT_CHARS.
+    extract_max_text_chars: int = Field(default=20_000, gt=0)
+
     # LLM provider credential, supplied via the LLM_API_KEY environment
     # variable. Unused until LLM integration is implemented.
     llm_api_key: SecretStr | None = None
