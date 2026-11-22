@@ -14,6 +14,7 @@ from typing import Any
 import httpx2
 import pytest
 
+from app.core.config import settings
 from app.services.llm import (
     LLMClient,
     LLMError,
@@ -65,7 +66,8 @@ def _make_transport(handler) -> httpx2.MockTransport:
     return httpx2.MockTransport(handler)
 
 
-def test_not_configured_when_no_api_key() -> None:
+def test_not_configured_when_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "llm_api_key", None)
     client = LLMClient(api_key=None, base_url="https://example.com/v1")
     assert not client.is_configured
 
@@ -80,7 +82,10 @@ def test_configured_with_api_key() -> None:
     assert client.is_configured
 
 
-def test_chat_without_api_key_raises() -> None:
+def test_chat_without_api_key_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "llm_api_key", None)
     client = LLMClient(api_key=None, base_url="https://example.com/v1")
     with pytest.raises(LLMNotConfiguredError):
         _run(client.chat(_chat_params()))
