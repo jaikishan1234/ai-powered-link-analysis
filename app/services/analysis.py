@@ -11,10 +11,13 @@ instructs the model not to follow any instructions embedded in the page text.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.services.extraction import ExtractedPage
@@ -140,6 +143,8 @@ class AnalysisService:
         task: str,
         schema_hint: str,
         model: type[BaseModel],
+        section_name: str = "unknown",
+        max_tokens: int | None = None,
     ) -> BaseModel:
         """Call the LLM in JSON mode and validate the result with a Pydantic model."""
         messages: list[Mapping[str, str]] = [
@@ -147,14 +152,28 @@ class AnalysisService:
             {"role": "user", "content": self._user_prompt(context, task, schema_hint)},
         ]
         try:
-            raw: Any = await self.llm_client.chat_json(messages)
-        except LLMError:
+            raw: Any = await self.llm_client.chat_json(
+                messages, max_tokens=max_tokens
+            )
+        except LLMError as exc:
+            logger.error(
+                "LLM %s in section '%s': %s",
+                exc.__class__.__name__,
+                section_name,
+                str(exc),
+            )
             raise
         try:
             return model.model_validate(raw)
         except ValidationError as exc:
+            safe_errors = exc.errors(include_input=False)
+            logger.error(
+                "Schema validation failed for section '%s': %s",
+                section_name,
+                safe_errors,
+            )
             raise AnalysisError(
-                f"LLM response failed schema validation: {exc}"
+                f"LLM response failed schema validation for section '{section_name}': {exc}"
             ) from exc
 
     # ------------------------------------------------------------------
@@ -179,6 +198,8 @@ class AnalysisService:
                 '"notes": "string or null"}'
             ),
             model=CompetitorAnalysis,
+            section_name="competitors",
+            max_tokens=1200,
         )
 
     async def _analyze_search_queries(self, context: str) -> SearchQueries:
@@ -186,19 +207,25 @@ class AnalysisService:
         return await self._call_llm_json(
             context,
             task=(
-                f"Identify up to {_MAX_SEARCH_QUERIES} target search queries "
+                f"Identify exactly {_MAX_SEARCH_QUERIES} target search queries "
                 "that this website should rank for. For each query, specify the "
                 "platform (e.g. Google, Bing, LinkedIn) and search intent "
                 "(informational, navigational, commercial, transactional). "
+                "Also specify a source field for each query using exactly one of "
+                "these values: 'website' (directly supported by website content), "
+                "'ai_generated' (AI recommendation without direct website evidence), "
+                "or 'inferred' (derived from available website context). "
                 "Base queries on the website content where possible; otherwise "
                 "mark them as AI-generated."
             ),
             schema_hint=(
                 '{"queries": [{"query": "string", "platform": "string", '
                 '"search_intent": "informational|navigational|commercial|transactional", '
-                '"source": "ai_generated"}]}'
+                '"source": "website|ai_generated|inferred"}]}'
             ),
             model=SearchQueries,
+            section_name="search_queries",
+            max_tokens=1200,
         )
 
     async def _analyze_seo(self, context: str) -> SEOImprovements:
@@ -217,6 +244,8 @@ class AnalysisService:
                 '"meta_description": "string", "content_recommendations": ["string"]}'
             ),
             model=SEOImprovements,
+            section_name="seo",
+            max_tokens=1000,
         )
 
     async def _analyze_services(self, context: str) -> ServicesAnalysis:
@@ -237,6 +266,8 @@ class AnalysisService:
                 '"benefits": ["string"], "source": "website|inferred"}]}'
             ),
             model=ServicesAnalysis,
+            section_name="services",
+            max_tokens=1500,
         )
 
     async def _analyze_target_audience(self, context: str) -> TargetAudience:
@@ -259,6 +290,8 @@ class AnalysisService:
                 '"geography": ["string"]}'
             ),
             model=TargetAudience,
+            section_name="target_audience",
+            max_tokens=1200,
         )
 
     # ------------------------------------------------------------------

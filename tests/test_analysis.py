@@ -8,6 +8,7 @@ network access is required.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -322,4 +323,213 @@ def test_system_prompt_warns_about_untrusted_data() -> None:
     assert "UNTRUSTED DATA" in prompt
     assert "instructions" in prompt.lower()
     assert "do not execute" in prompt.lower()
+
+
+def test_analysis_error_includes_section_name() -> None:
+    """AnalysisError identifies which section failed validation."""
+    page = _make_extracted_page()
+    # Return JSON missing required 'seo_title' field for SEO section
+    llm_return = {
+        "competitors": [],
+        "queries": [],
+        "keywords": [],
+        "meta_description": "A description.",
+        "content_recommendations": [],
+        "services": [],
+        "customer_profiles": [],
+        "industries": [],
+        "needs": [],
+        "challenges": [],
+        "geography": [],
+    }
+    mock_llm = _make_mock_llm(llm_return)
+    service = AnalysisService(mock_llm)
+    with pytest.raises(AnalysisError, match="seo"):
+        _run(service.analyze_page(page))
+
+
+def test_schema_validation_logs_safe_errors_without_input(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Schema validation logs safe error details without input values."""
+    page = _make_extracted_page()
+    # Return JSON missing required 'seo_title' field for SEO section
+    llm_return = {
+        "competitors": [],
+        "queries": [],
+        "keywords": [],
+        "meta_description": "A description.",
+        "content_recommendations": [],
+        "services": [],
+        "customer_profiles": [],
+        "industries": [],
+        "needs": [],
+        "challenges": [],
+        "geography": [],
+    }
+    mock_llm = _make_mock_llm(llm_return)
+    service = AnalysisService(mock_llm)
+
+    with caplog.at_level(logging.ERROR, logger="app.services.analysis"):
+        with pytest.raises(AnalysisError):
+            _run(service.analyze_page(page))
+
+    # Section name should be logged
+    assert "seo" in caplog.text
+    # Input values should not be logged (include_input=False excludes 'input' key)
+    assert '"input"' not in caplog.text
+
+
+def test_search_queries_prompt_requires_source_field() -> None:
+    """Search queries prompt explicitly requires source field with allowed values."""
+    captured_messages: list[dict] = []
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            captured_messages.extend(messages)
+            user_content = messages[-1]["content"] if messages else ""
+            if "search queries" in user_content.lower():
+                return {
+                    "queries": [
+                        {
+                            "query": "example query",
+                            "platform": "Google",
+                            "search_intent": "informational",
+                            "source": "ai_generated",
+                        }
+                    ]
+                }
+            if "seo" in user_content.lower() and "improvement" in user_content.lower():
+                return {
+                    "keywords": ["example"],
+                    "seo_title": "Example Title",
+                    "meta_description": "Example description.",
+                    "content_recommendations": ["Add more content."],
+                }
+            if "competitor" in user_content.lower():
+                return {"competitors": [], "notes": "No competitors found."}
+            if "service" in user_content.lower():
+                return {"services": []}
+            if "audience" in user_content.lower():
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    user_messages = [m for m in captured_messages if m["role"] == "user"]
+    assert len(user_messages) >= 5
+    # Find the search queries user message specifically
+    search_user_content = ""
+    for m in user_messages:
+        if "search queries" in m["content"].lower():
+            search_user_content = m["content"]
+            break
+    assert search_user_content, "Search queries user message not found"
+
+    # Prompt should require exactly five queries
+    assert "exactly 5 target search queries" in search_user_content
+    # Prompt should list all three allowed source values
+    assert "'website'" in search_user_content
+    assert "'ai_generated'" in search_user_content
+    assert "'inferred'" in search_user_content
+    # Prompt should explain source meanings
+    assert "directly supported by website content" in search_user_content
+    assert "AI recommendation without direct website evidence" in search_user_content
+    assert "derived from available website context" in search_user_content
+
+
+def test_max_tokens_passed_per_section() -> None:
+    """Each analysis section passes its own max_tokens to chat_json."""
+    captured_tokens: dict[str, int | None] = {}
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            # Find the section name from the system prompt or user content
+            user_content = messages[-1]["content"] if messages else ""
+            if "competitors" in user_content.lower() and "Identify" in user_content:
+                section = "competitors"
+            elif "search queries" in user_content.lower():
+                section = "search_queries"
+            elif "seo improvement" in user_content.lower():
+                section = "seo"
+            elif "services offered" in user_content.lower():
+                section = "services"
+            elif "target audience" in user_content.lower():
+                section = "target_audience"
+            else:
+                section = "unknown"
+            captured_tokens[section] = max_tokens
+
+            if section == "competitors":
+                return {"competitors": [], "notes": None}
+            if section == "search_queries":
+                return {"queries": []}
+            if section == "seo":
+                return {
+                    "keywords": [],
+                    "seo_title": "Example",
+                    "meta_description": "Example site.",
+                    "content_recommendations": [],
+                }
+            if section == "services":
+                return {"services": []}
+            if section == "target_audience":
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    assert captured_tokens["competitors"] == 1200
+    assert captured_tokens["search_queries"] == 1200
+    assert captured_tokens["seo"] == 1000
+    assert captured_tokens["services"] == 1500
+    assert captured_tokens["target_audience"] == 1200
+
+
+def test_max_tokens_truncated_json_still_raises() -> None:
+    """Truncated JSON from max_tokens limit still produces AnalysisError."""
+
+    class _TruncatingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            # Return truncated/invalid JSON that will fail schema validation
+            return '{"competitors": [{"name": "Incomplete'
+
+    page = _make_extracted_page()
+    service = AnalysisService(_TruncatingLLM())
+    with pytest.raises(AnalysisError, match="schema validation"):
+        _run(service.analyze_page(page))
 

@@ -7,6 +7,7 @@ analysis services into a single ``POST /link-analysis`` endpoint.
 from __future__ import annotations
 
 import anyio
+import logging
 from functools import lru_cache
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -30,6 +31,8 @@ from app.schemas.link_analysis import LinkAnalysisRequest, LinkAnalysisError
 from app.utils.url_validation import URLValidationError, validate_public_url
 
 router = APIRouter(tags=["link-analysis"])
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache()
@@ -127,21 +130,38 @@ async def link_analysis(
     try:
         result = await service.analyze_page(extracted_page)
     except LLMNotConfiguredError as exc:
+        logger.error(
+            "LLM not configured: %s",
+            exc.__class__.__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="LLM service is not configured. Set LLM_API_KEY.",
         ) from exc
     except LLMRateLimitError as exc:
+        logger.error(
+            "LLM rate limit error: %s",
+            exc.__class__.__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="LLM service rate limit exceeded. Try again later.",
         ) from exc
     except LLMError as exc:
+        logger.error(
+            "LLM %s: %s",
+            exc.__class__.__name__,
+            str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LLM service error.",
         ) from exc
     except AnalysisError as exc:
+        logger.error(
+            "Analysis error: %s",
+            str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Analysis failed.",

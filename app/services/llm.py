@@ -11,6 +11,7 @@ No API keys are ever hardcoded; the key is read exclusively from the
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 import json
 from typing import Any
@@ -18,6 +19,8 @@ from typing import Any
 import httpx2
 
 from app.core.config import Settings, settings
+
+logger = logging.getLogger(__name__)
 
 _CHAT_COMPLETIONS_PATH: str = "/chat/completions"
 _JSON_CONTENT_TYPE: str = "application/json"
@@ -170,18 +173,57 @@ class LLMClient:
             choices = data["choices"]
             if not isinstance(choices, list) or not choices:
                 raise LLMInvalidResponseError("LLM response has no choices.")
-            message = choices[0]["message"]
-            content = message["content"]
-            if not isinstance(content, str):
-                raise LLMInvalidResponseError(
-                    "LLM message content is not a string."
+            choice = choices[0]
+            message = choice.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            finish_reason = choice.get("finish_reason")
+            tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            is_tool_call_response = (
+                finish_reason == "tool_calls"
+                or (isinstance(tool_calls, list) and len(tool_calls) > 0)
+            )
+
+            if isinstance(content, str):
+                text_content = content
+            elif content is None:
+                text_content = ""
+            elif isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        block_text = block.get("text")
+                        if isinstance(block_text, str):
+                            parts.append(block_text)
+                text_content = "".join(parts)
+            else:
+                raise LLMInvalidResponseError("LLM message content is not a string.")
+
+            if not text_content:
+                usage = data.get("usage") if isinstance(data, dict) else None
+                completion_tokens = None
+                if isinstance(usage, dict):
+                    completion_tokens = usage.get("completion_tokens")
+                refusal = message.get("refusal") if isinstance(message, dict) else None
+                logger.error(
+                    "LLM response empty content: finish_reason=%s, max_tokens=%s, "
+                    "completion_tokens=%s, tool_calls_present=%s, refusal_present=%s",
+                    finish_reason,
+                    max_tokens,
+                    completion_tokens,
+                    tool_calls is not None and len(tool_calls) > 0,
+                    refusal is not None,
                 )
+                if is_tool_call_response:
+                    raise LLMInvalidResponseError(
+                        "LLM response contains tool calls but no text content."
+                    )
+                raise LLMInvalidResponseError("LLM message content is empty.")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMInvalidResponseError(
                 f"LLM response has unexpected structure: {exc}"
             ) from exc
 
-        return content
+        return text_content
 
     async def chat_json(
         self,

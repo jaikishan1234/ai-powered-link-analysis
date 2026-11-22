@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -31,7 +32,16 @@ from app.schemas.analysis import (
     TargetAudience,
 )
 from app.services.extraction import ExtractedPage, Heading
-from app.services.llm import LLMNotConfiguredError, LLMRateLimitError
+from app.services.analysis import AnalysisError
+from app.services.llm import (
+    LLMError,
+    LLMAuthenticationError,
+    LLMInvalidResponseError,
+    LLMNotConfiguredError,
+    LLMRateLimitError,
+    LLMNetworkError,
+    LLMTimeoutError,
+)
 from app.utils.url_validation import ValidatedURL
 
 PUBLIC_IPV4 = "93.184.216.34"
@@ -293,3 +303,258 @@ def test_health_endpoint_still_works() -> None:
         response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_llm_not_configured_logs_exception_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMNotConfiguredError logs the exception class name."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMNotConfiguredError("no key")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 503
+    assert "LLMNotConfiguredError" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_llm_rate_limit_logs_exception_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMRateLimitError logs the exception class name."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMRateLimitError("rate limited")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 503
+    assert "LLMRateLimitError" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_llm_timeout_logs_exception_class_and_message(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMTimeoutError logs exception class and message."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMTimeoutError("The LLM request timed out.")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 502
+    assert "LLMTimeoutError" in caplog.text
+    assert "The LLM request timed out" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_llm_network_error_logs_exception_class_and_message(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMNetworkError logs exception class and message."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMNetworkError("connection refused")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 502
+    assert "LLMNetworkError" in caplog.text
+    assert "connection refused" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_llm_auth_error_logs_exception_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMAuthenticationError logs exception class and message."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMAuthenticationError("Invalid or missing API key.")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 502
+    assert "LLMAuthenticationError" in caplog.text
+    assert "Invalid or missing API key" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_llm_invalid_response_logs_exception_class_and_status(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LLMInvalidResponseError logs exception class and HTTP status from message."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise LLMInvalidResponseError("LLM API returned HTTP 410.")
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 502
+    assert "LLMInvalidResponseError" in caplog.text
+    assert "HTTP 410" in caplog.text
+
+    _clear_overrides(app)
+
+
+def test_analysis_error_logs_section_name(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AnalysisError logs the section name from the error message."""
+    app = _build_app()
+
+    class _FailingService:
+        async def analyze_page(
+            self, extracted_page: ExtractedPage
+        ) -> AnalysisResponse:
+            raise AnalysisError(
+                "LLM response failed schema validation for section 'seo': ..."
+            )
+
+    app.dependency_overrides[get_analysis_service] = lambda: _FailingService()
+
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.validate_public_url",
+        lambda url: _validated_url(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.link_analysis.fetch_html",
+        lambda validated_url: _fake_fetch_ok(validated_url),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.link_analysis"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/link-analysis", json={"url": "https://example.com/"}
+            )
+
+    assert response.status_code == 500
+    assert "seo" in caplog.text
+
+    _clear_overrides(app)
+
+
+async def _fake_fetch_ok(validated_url: Any) -> Any:
+    return _make_fetched_page()
