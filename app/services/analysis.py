@@ -40,6 +40,39 @@ _MAX_SEARCH_QUERIES: int = 5
 #: Maximum number of services to request from the model.
 _MAX_SERVICES: int = 5
 
+#: Placeholder competitor names that should be treated as missing or invalid.
+_COMPETITOR_NAME_PLACEHOLDERS: frozenset[str] = frozenset(
+    {"null", "none", "n/a", "unknown", "not available"}
+)
+
+
+def _normalize_competitor_entries(raw: Any) -> Any:
+    """Remove competitor entries with missing, blank, or placeholder names.
+
+    Only acts on mapping objects that contain a ``competitors`` list; all other
+    input is returned unchanged so unrelated analysis sections are unaffected.
+    Valid entries are preserved as-is, including their ``source`` field.
+    """
+    if not isinstance(raw, Mapping):
+        return raw
+    competitors = raw.get("competitors")
+    if not isinstance(competitors, list):
+        return raw
+    cleaned: list[Any] = []
+    for entry in competitors:
+        if not isinstance(entry, Mapping):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        trimmed = name.strip()
+        if not trimmed or trimmed.lower() in _COMPETITOR_NAME_PLACEHOLDERS:
+            continue
+        cleaned.append(entry)
+    result = dict(raw)
+    result["competitors"] = cleaned
+    return result
+
 
 class AnalysisError(Exception):
     """Base class for analysis failures."""
@@ -164,7 +197,7 @@ class AnalysisService:
             )
             raise
         try:
-            return model.model_validate(raw)
+            return model.model_validate(_normalize_competitor_entries(raw))
         except ValidationError as exc:
             safe_errors = exc.errors(include_input=False)
             logger.error(
@@ -186,15 +219,36 @@ class AnalysisService:
             context,
             task=(
                 f"Identify up to {_MAX_COMPETITORS} competitors relevant to "
-                "this website. If no competitors can be determined from the "
-                "website content alone, return an empty competitors list and "
-                "explain in the notes that competitors could not be identified "
-                "from the page. Any competitor names are AI-generated "
-                "inferences, not facts from the website."
+                "this website. First, analyze the website content to understand "
+                "the business, product category, target market, and positioning. "
+                "Second, identify competitors explicitly supported by website "
+                "content (for example, named in comparisons, 'alternatives to' "
+                "sections, partner logos, or customer testimonials) and mark "
+                "those with source='website'. Third, identify well-established "
+                "competitors in the same business category using general "
+                "knowledge when the category is clear; competitors may be "
+                "identified using general knowledge and marked with "
+                "source='ai_generated'. Aim to list up "
+                f"to {_MAX_COMPETITORS} credible competitors when confidently "
+                "possible, at least three when the evidence supports it. For "
+                "ecommerce websites, recognize WooCommerce, BigCommerce, and "
+                "Wix as examples of potential competitors, but do not include "
+                "them automatically when irrelevant. Never include the "
+                "documented website itself or its parent company/sister brands "
+                "as a competitor. Never include customers, merchants, clients, case studies, partners, or brands that "
+                "merely use the analyzed platform as competitors, even if they appear on the website. Never fabricate "
+                "competitor names, websites, partnerships, or claims; never invent them. "
+                "Only include competitors "
+                "you can identify with reasonable confidence. For each "
+                "competitor, explain why they are relevant in the "
+                "'why_relevant' field. If no competitors can be confidently "
+                "identified, return an empty competitors list and explain in "
+                "the notes why. Ensure the competitors array and notes never "
+                "contradict each other."
             ),
             schema_hint=(
                 '{"competitors": [{"name": "string", "website": "string or null", '
-                '"description": "string", "why_relevant": "string", "source": "ai_generated"}], '
+                '"description": "string", "why_relevant": "string", "source": "website|ai_generated"}], '
                 '"notes": "string or null"}'
             ),
             model=CompetitorAnalysis,
@@ -209,14 +263,25 @@ class AnalysisService:
             task=(
                 f"Identify exactly {_MAX_SEARCH_QUERIES} target search queries "
                 "that this website should rank for. For each query, specify the "
-                "platform (e.g. Google, Bing, LinkedIn) and search intent "
+                "platform (e.g. Google, Bing, LinkedIn, Facebook, Instagram, X) "
                 "(informational, navigational, commercial, transactional). "
-                "Also specify a source field for each query using exactly one of "
-                "these values: 'website' (directly supported by website content), "
-                "'ai_generated' (AI recommendation without direct website evidence), "
+                "Choose platforms based on the business type, audience, content "
+                "and search intent. Use Google for broad search intent where "
+                "appropriate. Use LinkedIn for relevant B2B audiences and "
+                "professional services. Use Instagram and Facebook for relevant "
+                "consumer brands and social discovery. Use X where relevant to "
+                "news, technology or public discussions. Do not force every "
+                "platform into the result; include only platforms genuinely "
+                "relevant to this website. Also specify a source field for each "
+                "query using exactly one of "
+                "these values: 'website' (directly supported by website "
+                "content), "
+                "'ai_generated' (AI recommendation without direct website "
+                "evidence), "
                 "or 'inferred' (derived from available website context). "
                 "Base queries on the website content where possible; otherwise "
-                "mark them as AI-generated."
+                "mark them as AI-generated. Do not fabricate search volumes, "
+                "rankings or performance statistics."
             ),
             schema_hint=(
                 '{"queries": [{"query": "string", "platform": "string", '
@@ -258,7 +323,14 @@ class AnalysisService:
                 "industries, target customers, and key benefits. Services and "
                 "descriptions drawn from the website content are marked with "
                 'source "website"; inferred services are marked "inferred". '
-                "Do not invent services not suggested by the content."
+                "Do not invent services not suggested by the content. Do not append "
+                "extraction labels or source artifacts such as the word 'website' to "
+                "descriptions. Include numerical claims only when explicitly supported "
+                "by the supplied website content; otherwise omit the numbers. If no "
+                "services can be confidently identified, return an empty "
+                "services list. Never include null or placeholder entries in "
+                "the services array; every included service must be a valid "
+                "object with a meaningful name and description."
             ),
             schema_hint=(
                 '{"services": [{"name": "string", "description": "string", '

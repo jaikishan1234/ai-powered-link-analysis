@@ -533,3 +533,341 @@ def test_max_tokens_truncated_json_still_raises() -> None:
     with pytest.raises(AnalysisError, match="schema validation"):
         _run(service.analyze_page(page))
 
+
+def test_competitor_prompt_distinguishes_website_confirmed_vs_ai_generated() -> None:
+    """Competitor prompt distinguishes website-confirmed vs AI-generated competitors."""
+    captured_messages: list[dict] = []
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            captured_messages.extend(messages)
+            user_content = messages[-1]["content"] if messages else ""
+            if "competitors" in user_content.lower():
+                return {"competitors": [], "notes": None}
+            if "search queries" in user_content.lower():
+                return {"queries": []}
+            if "seo improvement" in user_content.lower():
+                return {
+                    "keywords": [],
+                    "seo_title": "Example",
+                    "meta_description": "Example description.",
+                    "content_recommendations": [],
+                }
+            if "services offered" in user_content.lower():
+                return {"services": []}
+            if "target audience" in user_content.lower():
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    user_messages = [m for m in captured_messages if m["role"] == "user"]
+    competitor_user_content = ""
+    for m in user_messages:
+        if "competitors" in m["content"].lower():
+            competitor_user_content = m["content"]
+            break
+    assert competitor_user_content, "Competitor user message not found"
+    # Prompt should explicitly ask to mark website-confirmed vs AI-generated competitors
+    assert "website" in competitor_user_content
+    assert "source" in competitor_user_content
+    assert "website|ai_generated" in competitor_user_content
+    # Prompt should not require website mentions as prerequisite
+    assert "first, read the website content carefully" not in competitor_user_content.lower()
+    assert "identified using general knowledge" in competitor_user_content.lower()
+
+
+def test_competitor_prompt_allows_established_competitors_without_fabrication() -> None:
+    """Competitor prompt permits established competitors without fabricating them."""
+    captured_messages: list[dict] = []
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            captured_messages.extend(messages)
+            user_content = messages[-1]["content"] if messages else ""
+            if "competitors" in user_content.lower():
+                return {"competitors": [], "notes": None}
+            if "search queries" in user_content.lower():
+                return {"queries": []}
+            if "seo improvement" in user_content.lower():
+                return {
+                    "keywords": [],
+                    "seo_title": "Example",
+                    "meta_description": "Example description.",
+                    "content_recommendations": [],
+                }
+            if "services offered" in user_content.lower():
+                return {"services": []}
+            if "target audience" in user_content.lower():
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    user_messages = [m for m in captured_messages if m["role"] == "user"]
+    competitor_user_content = ""
+    for m in user_messages:
+        if "competitors" in m["content"].lower():
+            competitor_user_content = m["content"]
+            break
+    assert competitor_user_content, "Competitor user message not found"
+    # Prompt should explicitly warn against fabrication
+    assert "never fabricate" in competitor_user_content.lower()
+    assert "never invent" in competitor_user_content.lower()
+    # Prompt should allow established competitors via general knowledge
+    assert "general knowledge" in competitor_user_content.lower()
+    # Prompt should aim for at least 3 competitors for clear categories
+    assert "up to 5" in competitor_user_content.lower()
+    assert "aim to list up to" in competitor_user_content.lower()
+    # Prompt should mention ecommerce examples as examples only
+    assert "woocommerce" in competitor_user_content.lower()
+    assert "bigcommerce" in competitor_user_content.lower()
+    assert "wix" in competitor_user_content.lower()
+
+
+def _make_full_llm_return(competitors: list[dict]) -> dict:
+    """Return a full analysis JSON dict with the given competitors."""
+    return {
+        "competitors": competitors,
+        "notes": None,
+        "queries": [],
+        "keywords": [],
+        "seo_title": "Example",
+        "meta_description": "Example site.",
+        "content_recommendations": [],
+        "services": [],
+        "customer_profiles": [],
+        "industries": [],
+        "needs": [],
+        "challenges": [],
+        "geography": [],
+    }
+
+
+def _run_competitor_analysis(competitors: list[dict]) -> CompetitorAnalysis:
+    """Run analyze_page with a mock LLM returning the given competitors."""
+    page = _make_extracted_page()
+    llm_return = _make_full_llm_return(competitors)
+    mock_llm = _make_mock_llm(llm_return)
+    service = AnalysisService(mock_llm)
+    result = _run(service.analyze_page(page))
+    return result.competitor_analysis
+
+
+def test_competitor_normalization_removes_null_name() -> None:
+    """A competitor with name 'null' and website 'null' is removed."""
+    analysis = _run_competitor_analysis(
+        [
+            {"name": "null", "website": "null", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "Real Co", "website": "https://real.example.com", "description": "A real competitor.", "why_relevant": "Same industry.", "source": "website"},
+        ]
+    )
+    assert len(analysis.competitors) == 1
+    assert analysis.competitors[0].name == "Real Co"
+    assert analysis.competitors[0].source == "website"
+
+
+def test_competitor_normalization_removes_placeholder_names() -> None:
+    """Empty or placeholder names are removed case-insensitively after trimming."""
+    analysis = _run_competitor_analysis(
+        [
+            {"name": "  ", "description": "blank", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "none", "description": "x", "why_relevant": "x", "source": "website"},
+            {"name": "N/A", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "Unknown", "description": "x", "why_relevant": "x", "source": "website"},
+            {"name": "Not Available", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "Valid Co", "description": "A real competitor.", "why_relevant": "Same industry.", "source": "website"},
+        ]
+    )
+    assert len(analysis.competitors) == 1
+    assert analysis.competitors[0].name == "Valid Co"
+
+
+def test_competitor_normalization_keeps_valid_competitor() -> None:
+    """A valid competitor remains unchanged, including source attribution."""
+    analysis = _run_competitor_analysis(
+        [
+            {
+                "name": "Acme Corp",
+                "website": "https://acme.example.com",
+                "description": "A competitor.",
+                "why_relevant": "Same industry.",
+                "source": "website",
+            }
+        ]
+    )
+    assert len(analysis.competitors) == 1
+    c = analysis.competitors[0]
+    assert c.name == "Acme Corp"
+    assert c.website == "https://acme.example.com"
+    assert c.description == "A competitor."
+    assert c.why_relevant == "Same industry."
+    assert c.source == "website"
+
+
+def test_competitor_normalization_mixed_list() -> None:
+    """A mixed list retains valid entries and removes only invalid ones."""
+    analysis = _run_competitor_analysis(
+        [
+            {"name": "null", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "Alpha", "description": "First.", "why_relevant": "Leader.", "source": "website"},
+            {"name": "none", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "Beta", "description": "Second.", "why_relevant": "Challenger.", "source": "ai_generated"},
+        ]
+    )
+    assert len(analysis.competitors) == 2
+    assert analysis.competitors[0].name == "Alpha"
+    assert analysis.competitors[0].source == "website"
+    assert analysis.competitors[1].name == "Beta"
+    assert analysis.competitors[1].source == "ai_generated"
+
+
+def test_competitor_normalization_all_invalid() -> None:
+    """An all-invalid list becomes an empty competitors list."""
+    analysis = _run_competitor_analysis(
+        [
+            {"name": "null", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+            {"name": "none", "description": "x", "why_relevant": "x", "source": "website"},
+            {"name": "unknown", "description": "x", "why_relevant": "x", "source": "ai_generated"},
+        ]
+    )
+    assert analysis.competitors == []
+
+
+def test_search_queries_prompt_mentions_all_platforms() -> None:
+    """Search queries prompt explicitly considers all requested platforms."""
+    captured_messages: list[dict] = []
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            captured_messages.extend(messages)
+            user_content = messages[-1]["content"] if messages else ""
+            if "search queries" in user_content.lower():
+                return {"queries": []}
+            if "seo improvement" in user_content.lower():
+                return {
+                    "keywords": [],
+                    "seo_title": "Example",
+                    "meta_description": "Example description.",
+                    "content_recommendations": [],
+                }
+            if "competitor" in user_content.lower():
+                return {"competitors": [], "notes": None}
+            if "services offered" in user_content.lower():
+                return {"services": []}
+            if "target audience" in user_content.lower():
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    user_messages = [m for m in captured_messages if m["role"] == "user"]
+    search_user_content = ""
+    for m in user_messages:
+        if "search queries" in m["content"].lower():
+            search_user_content = m["content"]
+            break
+    assert search_user_content, "Search queries user message not found"
+    # Prompt should mention all requested platforms
+    assert "Google" in search_user_content
+    assert "Bing" in search_user_content
+    assert "LinkedIn" in search_user_content
+    assert "Facebook" in search_user_content
+    assert "Instagram" in search_user_content
+    assert "X" in search_user_content
+
+
+def test_search_queries_prompt_does_not_force_all_platforms() -> None:
+    """Search queries prompt explicitly says not to force every platform."""
+    captured_messages: list[dict] = []
+
+    class _CapturingLLM:
+        async def chat_json(
+            self,
+            messages: list[Mapping[str, str]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+        ) -> Any:
+            captured_messages.extend(messages)
+            user_content = messages[-1]["content"] if messages else ""
+            if "search queries" in user_content.lower():
+                return {"queries": []}
+            if "seo improvement" in user_content.lower():
+                return {
+                    "keywords": [],
+                    "seo_title": "Example",
+                    "meta_description": "Example description.",
+                    "content_recommendations": [],
+                }
+            if "competitor" in user_content.lower():
+                return {"competitors": [], "notes": None}
+            if "services offered" in user_content.lower():
+                return {"services": []}
+            if "target audience" in user_content.lower():
+                return {
+                    "customer_profiles": [],
+                    "industries": [],
+                    "needs": [],
+                    "challenges": [],
+                    "geography": [],
+                }
+            return {}
+
+    page = _make_extracted_page()
+    service = AnalysisService(_CapturingLLM())
+    _run(service.analyze_page(page))
+
+    user_messages = [m for m in captured_messages if m["role"] == "user"]
+    search_user_content = ""
+    for m in user_messages:
+        if "search queries" in m["content"].lower():
+            search_user_content = m["content"]
+            break
+    assert search_user_content, "Search queries user message not found"
+    # Prompt should explicitly say not to force every platform
+    assert "do not force every platform" in search_user_content.lower()
+    assert "include only platforms genuinely relevant" in search_user_content.lower()
+    assert "do not force" in search_user_content.lower()
