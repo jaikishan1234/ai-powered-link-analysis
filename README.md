@@ -2,6 +2,34 @@
 
 AI-powered website analysis API built with Python, FastAPI, and LLMs. The service accepts a public URL, safely fetches and extracts its content, and returns structured analysis across five sections: competitor analysis, target search queries, SEO improvements, services offered, and target audience.
 
+## Live deployment (submission)
+
+The application is deployed and publicly accessible. Reviewers can test the API directly through the live Swagger UI without running anything locally.
+
+| Resource | URL |
+|----------|-----|
+| Live Application | https://ai-powered-link-analysis.onrender.com/ |
+| Swagger Documentation | https://ai-powered-link-analysis.onrender.com/docs |
+| API Endpoint | https://ai-powered-link-analysis.onrender.com/link-analysis |
+| Health Check | https://ai-powered-link-analysis.onrender.com/health |
+
+### Testing the API with Swagger UI
+
+1. Open the [Swagger Documentation](https://ai-powered-link-analysis.onrender.com/docs).
+2. Locate `POST /link-analysis` and click **Try it out**.
+3. Provide a request body such as:
+
+   ```json
+   {
+     "url": "https://example.com/"
+   }
+   ```
+
+4. Click **Execute** to receive a structured `AnalysisResponse` with competitor, search-query, SEO, services, and target-audience sections.
+5. Open `GET /health` to confirm the service is running.
+
+---
+
 ## What is included
 
 - FastAPI application entry point (`app/main.py`), served on port **4000**.
@@ -44,9 +72,9 @@ AI-powered website analysis API built with Python, FastAPI, and LLMs. The servic
 - **httpx2** 2.16.2 — asynchronous HTTP client for LLM and fetching
 - **beautifulsoup4** 4.15.0 — HTML parsing and extraction
 - **pytest** 9.2.0 — test framework
-- **NVIDIA NIM** — LLM provider via OpenAI-compatible Chat Completions API (`integrate.api.nvidia.com/v1`, default model `meta/llama-3.1-8b-instruct`)
+- **NVIDIA NIM** — LLM provider via OpenAI-compatible Chat Completions API (`integrate.api.nvidia.com/v1`, integrated model `nvidia/nemotron-3.5-bolt-e4b`)
 
-Only NVIDIA NIM is integrated. The `LLMClient` accepts `base_url`, `model`, and `api_key` as constructor parameters, but switching providers is not guaranteed to work through environment variables alone; provider compatibility must be tested before any change.
+Only NVIDIA NIM is integrated as the LLM provider. The `LLMClient` accepts `base_url`, `model`, and `api_key` as constructor parameters, but switching providers is not guaranteed to work through environment variables alone; provider compatibility must be tested before any change.
 
 ## Architecture and request-processing flow
 
@@ -102,7 +130,16 @@ Exception handling is layered: validation errors become `400`, fetch failures be
 │   ├── test_pinned_transport.py
 │   └── test_url_validation.py
 ├── docs/
-│   └── llm-research.md         # LLM provider comparison and cost analysis
+│   ├── llm-research.md         # LLM provider comparison and cost analysis
+│   └── screenshots/
+│       ├── 01-api-documentation.png
+│       ├── 02-api-request.png
+│       ├── 03-competitor-analysis.png
+│       ├── 04-search-queries.png
+│       ├── 05-seo-improvements.png
+│       ├── 06-audience.png
+│       ├── 07-services.png
+│       └── 08-health-check.png
 ├── .env.example
 ├── .gitignore
 ├── README.md
@@ -315,6 +352,64 @@ Security limitations:
 - DNS can change between validation and connection (DNS rebinding). The fetching layer connects only to the validated address snapshot and verifies the connected peer, but the snapshot is time-sensitive.
 - IDNA handling uses the standard library's IDNA 2003 codec, not full UTS #46. Confusable Unicode hostnames are not detected.
 
+## Screenshots
+
+The following screenshots illustrate the deployed application and its behavior. All images are relative to the repository root under `docs/screenshots/`.
+
+### API documentation and request
+
+#### API documentation
+
+![API documentation — Swagger UI](docs/screenshots/01-api-documentation.png)
+
+Swagger UI at `https://ai-powered-link-analysis.onrender.com/docs` showing the `POST /link-analysis` endpoint and its request/response schemas.
+
+#### API request
+
+![API request — POST /link-analysis](docs/screenshots/02-api-request.png)
+
+Example request body submitted through Swagger UI with a target website URL.
+
+### Analysis results
+
+#### Competitor analysis
+
+![Competitor analysis section](docs/screenshots/03-competitor-analysis.png)
+
+Competitor analysis output listing identified competitors with name, website, description, relevance, and `source` attribution.
+
+#### Search queries
+
+![Search queries section](docs/screenshots/04-search-queries.png)
+
+Target search queries with platform, search intent, and source attribution.
+
+#### SEO improvements
+
+![SEO improvements section](docs/screenshots/05-seo-improvements.png)
+
+SEO recommendations including keywords, SEO title, meta description, and content recommendations.
+
+#### Target audience
+
+![Target audience section](docs/screenshots/06-audience.png)
+
+Target audience profiles with demographics, industries, needs, challenges, and geography.
+
+#### Services
+
+![Services section](docs/screenshots/07-services.png)
+
+Services offered by the analyzed website with industries, target customers, and benefits.
+
+### Deployment health check
+
+#### Health check
+
+![Health check — GET /health](docs/screenshots/08-health-check.png)
+
+Health check response confirming the service is running.
+
 ## LLM integration
 
 The project integrates **NVIDIA NIM** through an OpenAI-compatible Chat Completions client in `app/services/llm.py`:
@@ -324,7 +419,9 @@ The project integrates **NVIDIA NIM** through an OpenAI-compatible Chat Completi
 - Raises typed exceptions for authentication failures, rate limits, timeouts, network errors, and invalid responses.
 - Five sequential LLM calls produce the competitor, search-query, SEO, services, and audience sections, each validated against a Pydantic schema.
 
-For the LLM provider comparison, cost estimates, and optimization strategies, see [docs/llm-research.md](docs/llm-research.md).
+The integrated model is `nvidia/nemotron-3.5-bolt-e4b` served through NVIDIA NIM at `https://integrate.api.nvidia.com/v1`.
+
+For the LLM provider comparison (NVIDIA NIM, OpenAI, Google Gemini, and Anthropic models), cost estimates, and optimization strategies, see [docs/llm-research.md](docs/llm-research.md). The models researched in that document other than `nvidia/nemotron-3.5-bolt-e4b` are comparisons only — they are not implemented providers in this project.
 
 ## Known limitations
 
